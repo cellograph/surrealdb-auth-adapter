@@ -143,7 +143,10 @@ export const surrealdbAdapter = (
         const bound = new BoundQuery(qs, bindings);
         logQuery(method, bound);
         const [rows] = await db.query<[unknown[]]>(bound).collect();
-        return rows ?? [];
+        if (rows === null || rows === undefined) return [];
+        // SurrealDB returns a plain object (not array) for ONLY queries
+        if (!Array.isArray(rows)) return [rows];
+        return rows;
       }
 
       // Cast to CustomAdapter to satisfy the generic method return types.
@@ -264,13 +267,21 @@ export const surrealdbAdapter = (
 
         async deleteMany({ model, where }) {
           const tableName = getModelName(model);
-          const rows = await runQuery(
+          // COUNT before deleting — SurrealDB DELETE returns [] so we can't infer count from result
+          const countRows = await runQuery(
+            "deleteMany", model, tableName, where,
+            `SELECT count() FROM ${tableName}`,
+            (ids) => `SELECT count() FROM [${ids.map((r) => r.toString()).join(", ")}]`,
+            {}, " GROUP ALL",
+          );
+          const count = (countRows[0] as Record<string, unknown>)?.["count"] as number ?? 0;
+          await runQuery(
             "deleteMany", model, tableName, where,
             `DELETE ${tableName}`,
             (ids) => `DELETE [${ids.map((r) => r.toString()).join(", ")}]`,
             {}, "",
           );
-          return (rows as unknown[]).length;
+          return count;
         },
 
         async createSchema({ file, tables }) {

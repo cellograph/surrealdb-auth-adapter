@@ -187,8 +187,8 @@ describe("surrealdbAdapter integration", () => {
   });
 
   test("accepts a SurrealSession instance", async () => {
-    const session = await db.newSession();
-    await session.use({ namespace: "test", database: "adapter_integration_test" });
+    // forkSession() clones the current session including auth/namespace/database context
+    const session = await db.forkSession();
     const sessionFactory = surrealdbAdapter(session, { idGenerator: "surreal.ULID" });
     const sessionAdapter = sessionFactory({} as BetterAuthOptions);
     const now = new Date();
@@ -204,9 +204,11 @@ describe("surrealdbAdapter integration", () => {
     const factory = surrealdbAdapter(db, { idGenerator: "surreal.ULID", allowPassingId: true });
     const a = factory({} as BetterAuthOptions);
     const now = new Date();
+    // forceAllowId: true is required so Better Auth passes the id field through to the adapter
     const result = await a.create({
       model: "user",
       data: { id: "user:custom-id-123", name: "Kai", email: "kai@test.com", emailVerified: false, createdAt: now, updatedAt: now },
+      forceAllowId: true,
     });
     expect(result.id).toContain("custom-id-123");
   });
