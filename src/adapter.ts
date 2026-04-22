@@ -52,18 +52,6 @@ export const surrealdbAdapter = (
       const generateId: (() => string) | undefined =
         advancedDb?.["generateId"] as (() => string) | undefined;
 
-      function getReferencedModel(tableName: string, fieldName: string): string | null {
-        const defaultModel = getDefaultModelName(tableName);
-        const defaultField = getDefaultFieldName({ model: defaultModel, field: fieldName });
-        const canonical = DEFAULT_FIELD_REFERENCES[defaultField];
-        if (canonical) {
-          try { return getModelName(canonical); } catch { /* not in schema */ }
-        }
-        return recordIdMap.tableSpecific[tableName]?.[fieldName] ?? null;
-      }
-
-      const whereCtx: WhereContext = { getModelName, getFieldName, getReferencedModel };
-
       function buildSpecialCases(): Record<string, Record<string, { recordTable: string; condition?: (d: Record<string, unknown>) => boolean }>> {
         const cases: Record<string, Record<string, { recordTable: string; condition?: (d: Record<string, unknown>) => boolean }>> = {};
         for (const rule of FIELD_MAPPING_RULES) {
@@ -78,16 +66,29 @@ export const surrealdbAdapter = (
         return cases;
       }
 
+      const specialCases = buildSpecialCases();
+
+      function getReferencedModel(tableName: string, fieldName: string): string | null {
+        const defaultModel = getDefaultModelName(tableName);
+        const defaultField = getDefaultFieldName({ model: defaultModel, field: fieldName });
+        const canonical = DEFAULT_FIELD_REFERENCES[defaultField];
+        if (canonical) {
+          try { return getModelName(canonical); } catch { /* not in schema */ }
+        }
+        return recordIdMap.tableSpecific[tableName]?.[fieldName] ?? null;
+      }
+
+      const whereCtx: WhereContext = { getModelName, getFieldName, getReferencedModel };
+
       function serializeRecordIdFields(
         tableName: string,
         data: Record<string, unknown>,
       ): Record<string, unknown> {
         const out = { ...data };
-        const special = buildSpecialCases();
         for (const fieldName of Object.keys(out)) {
           const value = out[fieldName];
           if (typeof value !== "string" || !value) continue;
-          const sc = special[tableName]?.[fieldName];
+          const sc = specialCases[tableName]?.[fieldName];
           if (sc) {
             if (!sc.condition || sc.condition(out)) {
               out[fieldName] = toRecordId(sc.recordTable, value);
