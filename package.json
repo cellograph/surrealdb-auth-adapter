@@ -1,0 +1,48 @@
+{
+  "name": "surrealdb-auth-adapter",
+  "version": "0.1.0",
+  "description": "SurrealDB adapter for Better Auth",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=20.0.0", "bun": ">=1.2.0" },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src tests",
+    "format": "biome format --write src tests",
+    "test:unit": "vitest run tests/record-id.test.ts tests/query-builder.test.ts tests/where-clause.test.ts",
+    "test:integration": "vitest run tests/adapter.test.ts",
+    "test": "bun run test:unit"
+  },
+  "peerDependencies": {
+    "better-auth": "^1.6.7",
+    "surrealdb": "^2.0.3"
+  },
+  "devDependencies": {
+    "@better-auth/cli": "^1.5.0-beta.13",
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^24.0.0",
+    "better-auth": "^1.6.7",
+    "surrealdb": "^2.0.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  },
+  "keywords": ["surrealdb", "better-auth", "adapter", "authentication", "database", "typescript"],
+  "author": { "name": "cellograph", "github": "https://github.com/cellograph" },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cellograph/surrealdb-auth-adapter.git"
+  }
+}
