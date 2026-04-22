@@ -13,19 +13,29 @@ export function toRecordId(table: string, id: unknown): RecordId {
   return new RecordId(table, String(id));
 }
 
-export function recordIdsToStrings<T>(value: T): T {
-  if (value === null || value === undefined) return value;
-  if (value instanceof RecordId) return value.toString() as unknown as T;
-  if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map(recordIdsToStrings) as unknown as T;
+type Stringify<T> = T extends RecordId
+  ? string
+  : T extends Date
+    ? T
+    : T extends (infer U)[]
+      ? Stringify<U>[]
+      : T extends object
+        ? { [K in keyof T]: Stringify<T[K]> }
+        : T;
+
+export function recordIdsToStrings<T>(value: T): Stringify<T> {
+  if (value === null || value === undefined) return value as Stringify<T>;
+  if (value instanceof RecordId) return value.toString() as Stringify<T>;
+  if (value instanceof Date) return value as Stringify<T>;
+  if (Array.isArray(value)) return value.map(recordIdsToStrings) as Stringify<T>;
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       out[k] = recordIdsToStrings(v);
     }
-    return out as T;
+    return out as Stringify<T>;
   }
-  return value;
+  return value as Stringify<T>;
 }
 
 export function mapNullToUndefined(

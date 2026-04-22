@@ -26,7 +26,7 @@ describe("toRecordId", () => {
 
   test("handles ID with multiple colons by splitting at first colon only", () => {
     const result = toRecordId("ignored", "ns:table:id");
-    expect(result.toString()).toContain("ns");
+    expect(result.toString()).toBe("ns:⟨table:id⟩");
   });
 });
 
