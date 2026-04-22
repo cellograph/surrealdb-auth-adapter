@@ -192,7 +192,7 @@ export const surrealdbAdapter = (
           const suffix = buildQuerySuffix({ limitOne: true });
           const rows = await runQuery(
             "findOne", model, tableName, where,
-            `SELECT ${fields} FROM ONLY ${tableName}`,
+            `SELECT ${fields} FROM ${tableName}`,
             (ids) => `SELECT ${fields} FROM ONLY ${ids[0]!.toString()}`,
             {}, suffix,
           );
