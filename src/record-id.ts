@@ -1,4 +1,4 @@
-import { RecordId } from "surrealdb";
+import { DateTime, RecordId } from "surrealdb";
 
 export function toRecordId(table: string, id: unknown): RecordId {
   if (id instanceof RecordId) return id;
@@ -26,6 +26,7 @@ type Stringify<T> = T extends RecordId
 export function recordIdsToStrings<T>(value: T): Stringify<T> {
   if (value === null || value === undefined) return value as Stringify<T>;
   if (value instanceof RecordId) return value.toString() as Stringify<T>;
+  if (value instanceof DateTime) return value.toDate() as Stringify<T>;
   if (value instanceof Date) return value as Stringify<T>;
   if (Array.isArray(value))
     return value.map(recordIdsToStrings) as Stringify<T>;
