@@ -1,6 +1,6 @@
 {
   "name": "surrealdb-auth-adapter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SurrealDB adapter for Better Auth",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -13,7 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20.0.0",
     "bun": ">=1.2.0"
@@ -44,7 +46,14 @@
     "vitest": "^3.2.0",
     "ws": "^8.20.0"
   },
-  "keywords": ["surrealdb", "better-auth", "adapter", "authentication", "database", "typescript"],
+  "keywords": [
+    "surrealdb",
+    "better-auth",
+    "adapter",
+    "authentication",
+    "database",
+    "typescript"
+  ],
   "author": {
     "name": "cellograph",
     "github": "https://github.com/cellograph"
