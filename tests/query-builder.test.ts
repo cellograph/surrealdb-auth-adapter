@@ -1,17 +1,21 @@
-import { describe, test, expect } from "vitest";
-import { RecordId } from "surrealdb";
-import {
-  buildQuerySuffix,
-  buildCreateQuery,
-  extractDirectRecords,
-  buildRecordIdMap,
-} from "../src/query-builder.js";
 import type { CleanedWhere } from "better-auth/adapters";
+import { RecordId } from "surrealdb";
+import { describe, expect, test } from "vitest";
+import {
+  buildCreateQuery,
+  buildQuerySuffix,
+  buildRecordIdMap,
+  extractDirectRecords,
+} from "../src/query-builder.js";
 
 function w(overrides: Partial<CleanedWhere>): CleanedWhere {
   return {
-    field: "id", value: "test", operator: "eq",
-    connector: "AND", mode: "sensitive", ...overrides,
+    field: "id",
+    value: "test",
+    operator: "eq",
+    connector: "AND",
+    mode: "sensitive",
+    ...overrides,
   };
 }
 
@@ -45,25 +49,36 @@ describe("buildQuerySuffix", () => {
   });
 
   test("adds RETURN with field list", () => {
-    expect(buildQuerySuffix({ returnFields: "id, name" })).toBe(" RETURN id, name");
+    expect(buildQuerySuffix({ returnFields: "id, name" })).toBe(
+      " RETURN id, name",
+    );
   });
 
   test("adds ORDER BY field ASC by default", () => {
     const fn = ({ field }: { model: string; field: string }) => field;
-    expect(buildQuerySuffix({ sortBy: { field: "name" }, model: "user" }, fn))
-      .toBe(" ORDER BY name ASC");
+    expect(
+      buildQuerySuffix({ sortBy: { field: "name" }, model: "user" }, fn),
+    ).toBe(" ORDER BY name ASC");
   });
 
   test("adds ORDER BY field DESC", () => {
     const fn = ({ field }: { model: string; field: string }) => field;
-    expect(buildQuerySuffix({ sortBy: { field: "createdAt", direction: "desc" }, model: "user" }, fn))
-      .toBe(" ORDER BY createdAt DESC");
+    expect(
+      buildQuerySuffix(
+        { sortBy: { field: "createdAt", direction: "desc" }, model: "user" },
+        fn,
+      ),
+    ).toBe(" ORDER BY createdAt DESC");
   });
 
   test("combines ORDER BY + LIMIT + START AT in correct order", () => {
     const fn = ({ field }: { model: string; field: string }) => field;
-    expect(buildQuerySuffix({ sortBy: { field: "name" }, model: "user", limit: 10, offset: 5 }, fn))
-      .toBe(" ORDER BY name ASC LIMIT 10 START AT 5");
+    expect(
+      buildQuerySuffix(
+        { sortBy: { field: "name" }, model: "user", limit: 10, offset: 5 },
+        fn,
+      ),
+    ).toBe(" ORDER BY name ASC LIMIT 10 START AT 5");
   });
 });
 
@@ -75,27 +90,37 @@ describe("buildCreateQuery", () => {
 
   test("uses rand::ulid() for surreal.ULID", () => {
     const q = buildCreateQuery("user", {}, { idGenerator: "surreal.ULID" });
-    expect(q.query).toBe("CREATE type::record('user', rand::ulid()) CONTENT $content");
+    expect(q.query).toBe(
+      "CREATE type::record('user', rand::ulid()) CONTENT $content",
+    );
   });
 
   test("uses rand::uuid() for surreal.UUID", () => {
     const q = buildCreateQuery("user", {}, { idGenerator: "surreal.UUID" });
-    expect(q.query).toBe("CREATE type::record('user', rand::uuid()) CONTENT $content");
+    expect(q.query).toBe(
+      "CREATE type::record('user', rand::uuid()) CONTENT $content",
+    );
   });
 
   test("uses rand::uuid::v4() for surreal.UUIDv4", () => {
     const q = buildCreateQuery("user", {}, { idGenerator: "surreal.UUIDv4" });
-    expect(q.query).toBe("CREATE type::record('user', rand::uuid::v4()) CONTENT $content");
+    expect(q.query).toBe(
+      "CREATE type::record('user', rand::uuid::v4()) CONTENT $content",
+    );
   });
 
   test("uses rand::uuid::v7() for surreal.UUIDv7", () => {
     const q = buildCreateQuery("user", {}, { idGenerator: "surreal.UUIDv7" });
-    expect(q.query).toBe("CREATE type::record('user', rand::uuid::v7()) CONTENT $content");
+    expect(q.query).toBe(
+      "CREATE type::record('user', rand::uuid::v7()) CONTENT $content",
+    );
   });
 
   test("uses rand::guid() for surreal.guid", () => {
     const q = buildCreateQuery("user", {}, { idGenerator: "surreal.guid" });
-    expect(q.query).toBe("CREATE type::record('user', rand::guid()) CONTENT $content");
+    expect(q.query).toBe(
+      "CREATE type::record('user', rand::guid()) CONTENT $content",
+    );
   });
 
   test("uses customId as the record target when provided", () => {
@@ -104,26 +129,48 @@ describe("buildCreateQuery", () => {
   });
 
   test("uses generateId() when provided and no customId", () => {
-    const q = buildCreateQuery("user", {}, undefined, undefined, undefined, () => "gen-id");
+    const q = buildCreateQuery(
+      "user",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      () => "gen-id",
+    );
     expect(q.query).toMatch(/^CREATE user:/);
     expect(q.query).toContain("gen-id");
   });
 
   test("customId takes precedence over generateId", () => {
-    const q = buildCreateQuery("user", {}, undefined, "custom", undefined, () => "gen-id");
+    const q = buildCreateQuery(
+      "user",
+      {},
+      undefined,
+      "custom",
+      undefined,
+      () => "gen-id",
+    );
     expect(q.query).toContain("custom");
     expect(q.query).not.toContain("gen-id");
   });
 
   test("appends RETURN clause when selectFields provided", () => {
-    const q = buildCreateQuery("user", { name: "Alice" }, undefined, undefined, "id, name");
-    expect(q.query).toBe("CREATE type::record('user') CONTENT $content RETURN id, name");
+    const q = buildCreateQuery(
+      "user",
+      { name: "Alice" },
+      undefined,
+      undefined,
+      "id, name",
+    );
+    expect(q.query).toBe(
+      "CREATE type::record('user') CONTENT $content RETURN id, name",
+    );
   });
 
   test("binds content to $content parameter", () => {
     const content = { name: "Alice" };
     const q = buildCreateQuery("user", content);
-    expect(q.bindings["content"]).toEqual(content);
+    expect(q.bindings.content).toEqual(content);
   });
 });
 
@@ -133,37 +180,53 @@ describe("extractDirectRecords", () => {
   });
 
   test("returns null when no id field in where", () => {
-    expect(extractDirectRecords([w({ field: "email", value: "a@b.com" })], "user")).toBeNull();
+    expect(
+      extractDirectRecords([w({ field: "email", value: "a@b.com" })], "user"),
+    ).toBeNull();
   });
 
   test("extracts RecordId from id eq condition", () => {
-    const result = extractDirectRecords([w({ field: "id", value: "abc", operator: "eq" })], "user");
+    const result = extractDirectRecords(
+      [w({ field: "id", value: "abc", operator: "eq" })],
+      "user",
+    );
     expect(result).not.toBeNull();
-    expect(result!.recordIds).toHaveLength(1);
-    expect(result!.recordIds[0]!.toString()).toBe("user:abc");
-    expect(result!.remainingWhere).toHaveLength(0);
+    expect(result?.recordIds).toHaveLength(1);
+    expect(result?.recordIds[0]?.toString()).toBe("user:abc");
+    expect(result?.remainingWhere).toHaveLength(0);
   });
 
   test("leaves non-id conditions in remainingWhere", () => {
-    const result = extractDirectRecords([
-      w({ field: "id", value: "abc" }),
-      w({ field: "email", value: "a@b.com" }),
-    ], "user");
-    expect(result!.remainingWhere).toHaveLength(1);
-    expect(result!.remainingWhere[0]!.field).toBe("email");
+    const result = extractDirectRecords(
+      [
+        w({ field: "id", value: "abc" }),
+        w({ field: "email", value: "a@b.com" }),
+      ],
+      "user",
+    );
+    expect(result?.remainingWhere).toHaveLength(1);
+    expect(result?.remainingWhere[0]?.field).toBe("email");
   });
 
   test("extracts multiple RecordIds from id IN condition", () => {
-    const result = extractDirectRecords([w({ field: "id", value: ["a", "b", "c"], operator: "in" })], "user");
-    expect(result!.recordIds).toHaveLength(3);
-    expect(result!.recordIds[0]!.toString()).toBe("user:a");
-    expect(result!.recordIds[2]!.toString()).toBe("user:c");
+    const result = extractDirectRecords(
+      [w({ field: "id", value: ["a", "b", "c"], operator: "in" })],
+      "user",
+    );
+    expect(result?.recordIds).toHaveLength(3);
+    expect(result?.recordIds[0]?.toString()).toBe("user:a");
+    expect(result?.recordIds[2]?.toString()).toBe("user:c");
   });
 });
 
 describe("buildRecordIdMap", () => {
   test("returns empty map when tables is empty", () => {
-    const map = buildRecordIdMap({} as any, (m) => m, ({ field }) => field);
+    const map = buildRecordIdMap(
+      // biome-ignore lint/suspicious/noExplicitAny: schema mock for testing
+      {} as any,
+      (m) => m,
+      ({ field }) => field,
+    );
     expect(map.tableSpecific).toEqual({});
   });
 
@@ -175,16 +238,26 @@ describe("buildRecordIdMap", () => {
           token: {},
         },
       },
+      // biome-ignore lint/suspicious/noExplicitAny: schema mock for testing
     } as any;
-    const map = buildRecordIdMap(tables, (m) => m, ({ field }) => field);
-    expect(map.tableSpecific["session"]?.["userId"]).toBe("user");
+    const map = buildRecordIdMap(
+      tables,
+      (m) => m,
+      ({ field }) => field,
+    );
+    expect(map.tableSpecific.session?.userId).toBe("user");
   });
 
   test("ignores fields with no references", () => {
     const tables = {
       user: { fields: { email: {}, name: {} } },
+      // biome-ignore lint/suspicious/noExplicitAny: schema mock for testing
     } as any;
-    const map = buildRecordIdMap(tables, (m) => m, ({ field }) => field);
-    expect(map.tableSpecific["user"]).toEqual({});
+    const map = buildRecordIdMap(
+      tables,
+      (m) => m,
+      ({ field }) => field,
+    );
+    expect(map.tableSpecific.user).toEqual({});
   });
 });

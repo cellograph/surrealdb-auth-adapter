@@ -27,7 +27,8 @@ export function recordIdsToStrings<T>(value: T): Stringify<T> {
   if (value === null || value === undefined) return value as Stringify<T>;
   if (value instanceof RecordId) return value.toString() as Stringify<T>;
   if (value instanceof Date) return value as Stringify<T>;
-  if (Array.isArray(value)) return value.map(recordIdsToStrings) as Stringify<T>;
+  if (Array.isArray(value))
+    return value.map(recordIdsToStrings) as Stringify<T>;
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {

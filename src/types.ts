@@ -25,8 +25,14 @@ export interface RecordIdMap {
 }
 
 export type AdapterMethod =
-  | "create" | "update" | "updateMany"
-  | "findOne" | "findMany" | "delete" | "deleteMany" | "count";
+  | "create"
+  | "update"
+  | "updateMany"
+  | "findOne"
+  | "findMany"
+  | "delete"
+  | "deleteMany"
+  | "count";
 
 export interface FieldMappingRule {
   sourceModel: string;
@@ -47,7 +53,12 @@ export interface QuerySuffixOptions {
 }
 
 export const COMPARISON_OPERATORS: Record<string, string> = {
-  eq: "=", ne: "!=", gt: ">", gte: ">=", lt: "<", lte: "<=",
+  eq: "=",
+  ne: "!=",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
 };
 
 export const STRING_OPERATORS: Record<string, string> = {
@@ -70,7 +81,7 @@ export const FIELD_MAPPING_RULES: FieldMappingRule[] = [
     sourceModel: "account",
     sourceField: "accountId",
     targetModel: "user",
-    condition: (data) => data["providerId"] === "credential",
+    condition: (data) => data.providerId === "credential",
   },
   {
     sourceModel: "oauthAccessToken",

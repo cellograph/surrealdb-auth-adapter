@@ -1,13 +1,26 @@
-import { BoundQuery, RecordId } from "surrealdb";
 import type { CleanedWhere } from "better-auth/adapters";
+import { BoundQuery, type RecordId } from "surrealdb";
 import { toRecordId } from "./record-id.js";
-import type { QuerySuffixOptions, RecordIdMap, SurrealAdapterConfig } from "./types.js";
+import type {
+  QuerySuffixOptions,
+  RecordIdMap,
+  SurrealAdapterConfig,
+} from "./types.js";
 
 export function buildQuerySuffix(
   opts: QuerySuffixOptions = {},
   getFieldName?: (opts: { model: string; field: string }) => string,
 ): string {
-  const { sortBy, limit, offset, groupAll, returnAfter, returnFields, limitOne, model } = opts;
+  const {
+    sortBy,
+    limit,
+    offset,
+    groupAll,
+    returnAfter,
+    returnFields,
+    limitOne,
+    model,
+  } = opts;
   let suffix = "";
 
   if (sortBy && model && getFieldName) {
@@ -45,25 +58,29 @@ export function buildCreateQuery(
   } else {
     switch (config?.idGenerator) {
       case "surreal.ULID":
-        targetClause = `type::record('${tableName}', rand::ulid())`; break;
+        targetClause = `type::record('${tableName}', rand::ulid())`;
+        break;
       case "surreal.UUID":
-        targetClause = `type::record('${tableName}', rand::uuid())`; break;
+        targetClause = `type::record('${tableName}', rand::uuid())`;
+        break;
       case "surreal.UUIDv4":
-        targetClause = `type::record('${tableName}', rand::uuid::v4())`; break;
+        targetClause = `type::record('${tableName}', rand::uuid::v4())`;
+        break;
       case "surreal.UUIDv7":
-        targetClause = `type::record('${tableName}', rand::uuid::v7())`; break;
+        targetClause = `type::record('${tableName}', rand::uuid::v7())`;
+        break;
       case "surreal.guid":
-        targetClause = `type::record('${tableName}', rand::guid())`; break;
+        targetClause = `type::record('${tableName}', rand::guid())`;
+        break;
       default:
         targetClause = `type::record('${tableName}')`;
     }
   }
 
   const suffix = selectFields ? ` RETURN ${selectFields}` : "";
-  return new BoundQuery(
-    `CREATE ${targetClause} CONTENT $content${suffix}`,
-    { content },
-  );
+  return new BoundQuery(`CREATE ${targetClause} CONTENT $content${suffix}`, {
+    content,
+  });
 }
 
 export function extractDirectRecords(
@@ -75,7 +92,7 @@ export function extractDirectRecords(
   const eqIdx = where.findIndex((w) => w.field === "id" && w.operator === "eq");
   if (eqIdx !== -1) {
     return {
-      recordIds: [toRecordId(tableName, where[eqIdx]!.value)],
+      recordIds: [toRecordId(tableName, where[eqIdx]?.value)],
       remainingWhere: where.filter((_, i) => i !== eqIdx),
     };
   }
@@ -85,7 +102,9 @@ export function extractDirectRecords(
   );
   if (inIdx !== -1) {
     return {
-      recordIds: (where[inIdx]!.value as unknown[]).map((id) => toRecordId(tableName, id)),
+      recordIds: (where[inIdx]?.value as unknown[]).map((id) =>
+        toRecordId(tableName, id),
+      ),
       remainingWhere: where.filter((_, i) => i !== inIdx),
     };
   }
@@ -94,7 +113,10 @@ export function extractDirectRecords(
 }
 
 export function buildRecordIdMap(
-  tables: Record<string, { fields?: Record<string, { references?: { model: string } }> }>,
+  tables: Record<
+    string,
+    { fields?: Record<string, { references?: { model: string } }> }
+  >,
   getModelName: (model: string) => string,
   getFieldName: (opts: { model: string; field: string }) => string,
 ): RecordIdMap {
@@ -109,8 +131,14 @@ export function buildRecordIdMap(
     for (const internalField of Object.keys(tableDef.fields)) {
       const fieldDef = tableDef.fields[internalField];
       if (fieldDef?.references?.model) {
-        const fieldName = getFieldName({ model: internalModel, field: internalField });
-        map.tableSpecific[tableName]![fieldName] = getModelName(fieldDef.references.model);
+        const fieldName = getFieldName({
+          model: internalModel,
+          field: internalField,
+        });
+        // biome-ignore lint/style/noNonNullAssertion: tableName entry is initialized two lines above
+        map.tableSpecific[tableName]![fieldName] = getModelName(
+          fieldDef.references.model,
+        );
       }
     }
   }

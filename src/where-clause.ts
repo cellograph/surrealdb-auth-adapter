@@ -1,5 +1,5 @@
-import { RecordId } from "surrealdb";
 import type { CleanedWhere } from "better-auth/adapters";
+import { RecordId } from "surrealdb";
 import { toRecordId } from "./record-id.js";
 import { COMPARISON_OPERATORS } from "./types.js";
 import type { SurrealAdapterConfig } from "./types.js";
@@ -23,11 +23,14 @@ export function buildWhereClause(
   const conditions: string[] = [];
 
   for (let idx = 0; idx < where.length; idx++) {
+    // biome-ignore lint/style/noNonNullAssertion: idx is within bounds by loop condition
     const item = where[idx]!;
     const { field: internalField, value, operator, connector, mode } = item;
 
-    if (operator === "in" && Array.isArray(value) && value.length === 0) continue;
-    if (operator === "not_in" && Array.isArray(value) && value.length === 0) continue;
+    if (operator === "in" && Array.isArray(value) && value.length === 0)
+      continue;
+    if (operator === "not_in" && Array.isArray(value) && value.length === 0)
+      continue;
 
     const fieldName = ctx.getFieldName({ model, field: internalField });
     const param = `where_${idx}`;
@@ -63,6 +66,7 @@ export function buildWhereClause(
         : `string::ends_with(${fieldName}, $${param})`;
       bindings[param] = value;
     } else if (operator in COMPARISON_OPERATORS) {
+      // biome-ignore lint/style/noNonNullAssertion: operator in COMPARISON_OPERATORS guarantees key exists
       const op = COMPARISON_OPERATORS[operator]!;
       if (insensitive) {
         conditionStr = `string::lowercase(${fieldName}) ${op} string::lowercase($${param})`;
@@ -73,12 +77,15 @@ export function buildWhereClause(
           bindings[param] = toRecordId(tableName, value);
         } else {
           const ref = ctx.getReferencedModel(tableName, fieldName);
-          bindings[param] = ref && typeof value === "string" ? toRecordId(ref, value) : value;
+          bindings[param] =
+            ref && typeof value === "string" ? toRecordId(ref, value) : value;
         }
       }
     } else {
       if (config?.strictOperators) {
-        throw new Error(`[surrealdb-auth-adapter]: Unknown operator '${operator}'`);
+        throw new Error(
+          `[surrealdb-auth-adapter]: Unknown operator '${operator}'`,
+        );
       }
       conditionStr = `${fieldName} = $${param}`;
       bindings[param] = value;

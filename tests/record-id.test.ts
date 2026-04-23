@@ -1,6 +1,10 @@
-import { describe, test, expect } from "vitest";
 import { RecordId } from "surrealdb";
-import { toRecordId, recordIdsToStrings, mapNullToUndefined } from "../src/record-id.js";
+import { describe, expect, test } from "vitest";
+import {
+  mapNullToUndefined,
+  recordIdsToStrings,
+  toRecordId,
+} from "../src/record-id.js";
 
 describe("toRecordId", () => {
   test("wraps plain string ID in RecordId with given table", () => {
@@ -38,7 +42,10 @@ describe("recordIdsToStrings", () => {
 
   test("converts RecordId values inside a flat object", () => {
     const input = { id: new RecordId("user", "abc"), name: "Alice" };
-    expect(recordIdsToStrings(input)).toEqual({ id: "user:abc", name: "Alice" });
+    expect(recordIdsToStrings(input)).toEqual({
+      id: "user:abc",
+      name: "Alice",
+    });
   });
 
   test("converts RecordId values inside nested objects", () => {
@@ -76,9 +83,9 @@ describe("recordIdsToStrings", () => {
 describe("mapNullToUndefined", () => {
   test("converts null values to undefined", () => {
     const result = mapNullToUndefined({ a: null, b: "hello", c: null });
-    expect(result["a"]).toBeUndefined();
-    expect(result["b"]).toBe("hello");
-    expect(result["c"]).toBeUndefined();
+    expect(result.a).toBeUndefined();
+    expect(result.b).toBe("hello");
+    expect(result.c).toBeUndefined();
   });
 
   test("does not mutate the original object", () => {
@@ -90,8 +97,8 @@ describe("mapNullToUndefined", () => {
   test("leaves non-null values untouched", () => {
     const date = new Date();
     const result = mapNullToUndefined({ d: date, n: 0, b: false });
-    expect(result["d"]).toBe(date);
-    expect(result["n"]).toBe(0);
-    expect(result["b"]).toBe(false);
+    expect(result.d).toBe(date);
+    expect(result.n).toBe(0);
+    expect(result.b).toBe(false);
   });
 });

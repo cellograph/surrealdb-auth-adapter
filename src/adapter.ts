@@ -1,23 +1,32 @@
+import type { BetterAuthOptions } from "better-auth";
+import { createAdapterFactory } from "better-auth/adapters";
+import type {
+  AdapterFactory,
+  CleanedWhere,
+  CustomAdapter,
+} from "better-auth/adapters";
 import { BoundQuery, RecordId, Uuid } from "surrealdb";
 import type { SurrealSession } from "surrealdb";
-import { createAdapterFactory } from "better-auth/adapters";
-import type { AdapterFactory, CleanedWhere, CustomAdapter } from "better-auth/adapters";
-import type { BetterAuthOptions } from "better-auth";
-import { mapNullToUndefined, recordIdsToStrings, toRecordId } from "./record-id.js";
-import { buildWhereClause } from "./where-clause.js";
-import type { WhereContext } from "./where-clause.js";
 import {
   buildCreateQuery,
   buildQuerySuffix,
   buildRecordIdMap,
   extractDirectRecords,
 } from "./query-builder.js";
-import { generateSchema } from "./schema.js";
 import {
-  DEFAULT_FIELD_REFERENCES,
-  FIELD_MAPPING_RULES,
+  mapNullToUndefined,
+  recordIdsToStrings,
+  toRecordId,
+} from "./record-id.js";
+import { generateSchema } from "./schema.js";
+import { DEFAULT_FIELD_REFERENCES, FIELD_MAPPING_RULES } from "./types.js";
+import type {
+  AdapterMethod,
+  RecordIdMap,
+  SurrealAdapterConfig,
 } from "./types.js";
-import type { AdapterMethod, RecordIdMap, SurrealAdapterConfig } from "./types.js";
+import { buildWhereClause } from "./where-clause.js";
+import type { WhereContext } from "./where-clause.js";
 
 export const surrealdbAdapter = (
   db: SurrealSession,
@@ -36,11 +45,22 @@ export const surrealdbAdapter = (
       supportsArrays: false,
       disableIdGeneration: config?.idGenerator?.startsWith("surreal") ?? false,
     },
-    adapter: ({ options, getModelName, getFieldName, getDefaultModelName, getDefaultFieldName, debugLog }) => {
+    adapter: ({
+      options,
+      getModelName,
+      getFieldName,
+      getDefaultModelName,
+      getDefaultFieldName,
+      debugLog,
+    }) => {
       const optionsAsAny = options as Record<string, unknown>;
-      const schemaTables = (optionsAsAny["schema"] as Record<string, unknown> | undefined)?.[
-        "tables"
-      ] as Record<string, { fields?: Record<string, { references?: { model: string } }> }> | undefined ?? {};
+      const schemaTables =
+        ((optionsAsAny.schema as Record<string, unknown> | undefined)?.tables as
+          | Record<
+              string,
+              { fields?: Record<string, { references?: { model: string } }> }
+            >
+          | undefined) ?? {};
 
       const recordIdMap: RecordIdMap = buildRecordIdMap(
         schemaTables,
@@ -48,37 +68,81 @@ export const surrealdbAdapter = (
         getFieldName,
       );
 
-      const advancedDb = ((optionsAsAny["advanced"] as Record<string, unknown> | undefined)?.["database"]) as Record<string, unknown> | undefined;
-      const generateId: (() => string) | undefined =
-        advancedDb?.["generateId"] as (() => string) | undefined;
+      const advancedDb = (
+        optionsAsAny.advanced as Record<string, unknown> | undefined
+      )?.database as Record<string, unknown> | undefined;
+      const generateId: (() => string) | undefined = advancedDb?.generateId as
+        | (() => string)
+        | undefined;
 
-      function buildSpecialCases(): Record<string, Record<string, { recordTable: string; condition?: (d: Record<string, unknown>) => boolean }>> {
-        const cases: Record<string, Record<string, { recordTable: string; condition?: (d: Record<string, unknown>) => boolean }>> = {};
+      function buildSpecialCases(): Record<
+        string,
+        Record<
+          string,
+          {
+            recordTable: string;
+            condition?: (d: Record<string, unknown>) => boolean;
+          }
+        >
+      > {
+        const cases: Record<
+          string,
+          Record<
+            string,
+            {
+              recordTable: string;
+              condition?: (d: Record<string, unknown>) => boolean;
+            }
+          >
+        > = {};
         for (const rule of FIELD_MAPPING_RULES) {
           try {
             const src = getModelName(rule.sourceModel);
             const tgt = getModelName(rule.targetModel);
-            const field = getFieldName({ model: rule.sourceModel, field: rule.sourceField });
+            const field = getFieldName({
+              model: rule.sourceModel,
+              field: rule.sourceField,
+            });
             if (!cases[src]) cases[src] = {};
-            cases[src]![field] = { recordTable: tgt, condition: rule.condition };
-          } catch { /* model not in schema */ }
+            // biome-ignore lint/style/noNonNullAssertion: initialized by the line above
+            cases[src]![field] = {
+              recordTable: tgt,
+              condition: rule.condition,
+            };
+          } catch {
+            /* model not in schema */
+          }
         }
         return cases;
       }
 
       const specialCases = buildSpecialCases();
 
-      function getReferencedModel(tableName: string, fieldName: string): string | null {
+      function getReferencedModel(
+        tableName: string,
+        fieldName: string,
+      ): string | null {
         const defaultModel = getDefaultModelName(tableName);
-        const defaultField = getDefaultFieldName({ model: defaultModel, field: fieldName });
+        const defaultField = getDefaultFieldName({
+          model: defaultModel,
+          field: fieldName,
+        });
         const canonical = DEFAULT_FIELD_REFERENCES[defaultField];
         if (canonical) {
-          try { return getModelName(canonical); } catch { /* not in schema */ }
+          try {
+            return getModelName(canonical);
+          } catch {
+            /* not in schema */
+          }
         }
         return recordIdMap.tableSpecific[tableName]?.[fieldName] ?? null;
       }
 
-      const whereCtx: WhereContext = { getModelName, getFieldName, getReferencedModel };
+      const whereCtx: WhereContext = {
+        getModelName,
+        getFieldName,
+        getReferencedModel,
+      };
 
       function serializeRecordIdFields(
         tableName: string,
@@ -103,9 +167,16 @@ export const surrealdbAdapter = (
 
       function logQuery(method: AdapterMethod, query: BoundQuery): void {
         if (!config?.debugLogs) return;
-        if (typeof config.debugLogs === "object" && !("isRunningAdapterTests" in config.debugLogs)) {
+        if (
+          typeof config.debugLogs === "object" &&
+          !("isRunningAdapterTests" in config.debugLogs)
+        ) {
           const opts = config.debugLogs as Record<string, unknown>;
-          if (typeof opts["logCondition"] === "function" && !(opts["logCondition"] as () => boolean)()) return;
+          if (
+            typeof opts.logCondition === "function" &&
+            !(opts.logCondition as () => boolean)()
+          )
+            return;
           if (method in opts && !opts[method]) return;
         }
         let readable = query.query;
@@ -115,7 +186,9 @@ export const surrealdbAdapter = (
             val instanceof RecordId ? val.toString() : JSON.stringify(val),
           );
         }
-        debugLog(`\x1b[1m[surrealdb-auth-adapter]\x1b[0m \x1b[2m${method}\x1b[0m\n\n  \x1b[38;5;200m${readable}\x1b[0m\n`);
+        debugLog(
+          `\x1b[1m[surrealdb-auth-adapter]\x1b[0m \x1b[2m${method}\x1b[0m\n\n  \x1b[38;5;200m${readable}\x1b[0m\n`,
+        );
       }
 
       async function runQuery(
@@ -128,15 +201,29 @@ export const surrealdbAdapter = (
         bindings: Record<string, unknown>,
         suffix: string,
       ): Promise<unknown[]> {
-        const direct = directQuery ? extractDirectRecords(where, tableName) : null;
+        const direct = directQuery
+          ? extractDirectRecords(where, tableName)
+          : null;
         let qs: string;
 
         if (direct && directQuery) {
           const { recordIds, remainingWhere } = direct;
-          const whereStr = buildWhereClause(bindings, remainingWhere, model, whereCtx, config);
+          const whereStr = buildWhereClause(
+            bindings,
+            remainingWhere,
+            model,
+            whereCtx,
+            config,
+          );
           qs = directQuery(recordIds) + whereStr + suffix;
         } else {
-          const whereStr = buildWhereClause(bindings, where, model, whereCtx, config);
+          const whereStr = buildWhereClause(
+            bindings,
+            where,
+            model,
+            whereCtx,
+            config,
+          );
           qs = scanQuery + whereStr + suffix;
         }
 
@@ -152,7 +239,7 @@ export const surrealdbAdapter = (
       // Cast to CustomAdapter to satisfy the generic method return types.
       // The actual runtime values are compatible; TypeScript just can't verify
       // that `recordIdsToStrings(x)` satisfies `T` for arbitrary generic T.
-      return ({
+      return {
         async create({ model, data, select }) {
           const tableName = getModelName(model);
           const cleaned = serializeRecordIdFields(
@@ -165,10 +252,10 @@ export const surrealdbAdapter = (
             customId = Uuid.v4().toString();
           } else if (config?.idGenerator === "sdk.UUIDv7") {
             customId = Uuid.v7().toString();
-          } else if (config?.allowPassingId && typeof cleaned["id"] === "string") {
-            customId = cleaned["id"];
+          } else if (config?.allowPassingId && typeof cleaned.id === "string") {
+            customId = cleaned.id;
           }
-          delete cleaned["id"];
+          cleaned.id = undefined;
 
           let selectFields: string | undefined;
           if (Array.isArray(select) && select.length > 0) {
@@ -177,10 +264,17 @@ export const surrealdbAdapter = (
             selectFields = fields.join(", ");
           }
 
-          const query = buildCreateQuery(tableName, cleaned, config, customId, selectFields, generateId);
+          const query = buildCreateQuery(
+            tableName,
+            cleaned,
+            config,
+            customId,
+            selectFields,
+            generateId,
+          );
           logQuery("create", query);
           const [rows] = await db.query<[unknown[]]>(query).collect();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
           return recordIdsToStrings((rows as unknown[])[0]) as any;
         },
 
@@ -191,22 +285,34 @@ export const surrealdbAdapter = (
             : "*";
           const suffix = buildQuerySuffix({ limitOne: true });
           const rows = await runQuery(
-            "findOne", model, tableName, where,
+            "findOne",
+            model,
+            tableName,
+            where,
             `SELECT ${fields} FROM ${tableName}`,
-            (ids) => `SELECT ${fields} FROM ONLY ${ids[0]!.toString()}`,
-            {}, suffix,
+            (ids) => `SELECT ${fields} FROM ONLY ${ids[0]?.toString()}`,
+            {},
+            suffix,
           );
           return recordIdsToStrings(rows[0] ?? null);
         },
 
         async findMany({ model, where = [], limit, offset, sortBy }) {
           const tableName = getModelName(model);
-          const suffix = buildQuerySuffix({ limit, offset, sortBy, model }, getFieldName);
+          const suffix = buildQuerySuffix(
+            { limit, offset, sortBy, model },
+            getFieldName,
+          );
           const rows = await runQuery(
-            "findMany", model, tableName, where,
+            "findMany",
+            model,
+            tableName,
+            where,
             `SELECT * FROM ${tableName}`,
-            (ids) => `SELECT * FROM [${ids.map((r) => r.toString()).join(", ")}]`,
-            {}, suffix,
+            (ids) =>
+              `SELECT * FROM [${ids.map((r) => r.toString()).join(", ")}]`,
+            {},
+            suffix,
           );
           return recordIdsToStrings(rows);
         },
@@ -215,12 +321,17 @@ export const surrealdbAdapter = (
           const tableName = getModelName(model);
           const suffix = buildQuerySuffix({ groupAll: true });
           const rows = await runQuery(
-            "count", model, tableName, where,
+            "count",
+            model,
+            tableName,
+            where,
             `SELECT count() FROM ${tableName}`,
-            (ids) => `SELECT count() FROM [${ids.map((r) => r.toString()).join(", ")}]`,
-            {}, suffix,
+            (ids) =>
+              `SELECT count() FROM [${ids.map((r) => r.toString()).join(", ")}]`,
+            {},
+            suffix,
           );
-          return (rows[0] as Record<string, unknown>)?.["count"] as number ?? 0;
+          return ((rows[0] as Record<string, unknown>)?.count as number) ?? 0;
         },
 
         async update({ model, where, update: values }) {
@@ -231,12 +342,16 @@ export const surrealdbAdapter = (
           );
           const suffix = buildQuerySuffix({ returnAfter: true });
           const rows = await runQuery(
-            "update", model, tableName, where,
+            "update",
+            model,
+            tableName,
+            where,
             `UPDATE ONLY ${tableName} MERGE $content`,
-            (ids) => `UPDATE ONLY ${ids[0]!.toString()} MERGE $content`,
-            { content }, suffix,
+            (ids) => `UPDATE ONLY ${ids[0]?.toString()} MERGE $content`,
+            { content },
+            suffix,
           );
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
           return recordIdsToStrings(rows[0] ?? null) as any;
         },
 
@@ -247,10 +362,15 @@ export const surrealdbAdapter = (
             mapNullToUndefined(values as Record<string, unknown>),
           );
           const rows = await runQuery(
-            "updateMany", model, tableName, where,
+            "updateMany",
+            model,
+            tableName,
+            where,
             `UPDATE ${tableName} MERGE $content`,
-            (ids) => `UPDATE [${ids.map((r) => r.toString()).join(", ")}] MERGE $content`,
-            { content }, "",
+            (ids) =>
+              `UPDATE [${ids.map((r) => r.toString()).join(", ")}] MERGE $content`,
+            { content },
+            "",
           );
           return (rows as unknown[]).length;
         },
@@ -258,10 +378,14 @@ export const surrealdbAdapter = (
         async delete({ model, where }) {
           const tableName = getModelName(model);
           await runQuery(
-            "delete", model, tableName, where,
+            "delete",
+            model,
+            tableName,
+            where,
             `DELETE ${tableName}`,
-            (ids) => `DELETE ${ids[0]!.toString()}`,
-            {}, "",
+            (ids) => `DELETE ${ids[0]?.toString()}`,
+            {},
+            "",
           );
         },
 
@@ -269,17 +393,27 @@ export const surrealdbAdapter = (
           const tableName = getModelName(model);
           // COUNT before deleting — SurrealDB DELETE returns [] so we can't infer count from result
           const countRows = await runQuery(
-            "deleteMany", model, tableName, where,
+            "deleteMany",
+            model,
+            tableName,
+            where,
             `SELECT count() FROM ${tableName}`,
-            (ids) => `SELECT count() FROM [${ids.map((r) => r.toString()).join(", ")}]`,
-            {}, " GROUP ALL",
+            (ids) =>
+              `SELECT count() FROM [${ids.map((r) => r.toString()).join(", ")}]`,
+            {},
+            " GROUP ALL",
           );
-          const count = (countRows[0] as Record<string, unknown>)?.["count"] as number ?? 0;
+          const count =
+            ((countRows[0] as Record<string, unknown>)?.count as number) ?? 0;
           await runQuery(
-            "deleteMany", model, tableName, where,
+            "deleteMany",
+            model,
+            tableName,
+            where,
             `DELETE ${tableName}`,
             (ids) => `DELETE [${ids.map((r) => r.toString()).join(", ")}]`,
-            {}, "",
+            {},
+            "",
           );
           return count;
         },
@@ -293,6 +427,6 @@ export const surrealdbAdapter = (
             getReferencedModel,
           });
         },
-      }) as CustomAdapter;
+      } as CustomAdapter;
     },
   });
