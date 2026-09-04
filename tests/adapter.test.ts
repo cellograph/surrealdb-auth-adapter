@@ -700,6 +700,68 @@ describe("surrealdbAdapter integration", () => {
       expect(result).toBe("done");
     });
 
+    test("a nested transaction joins the outer one", async () => {
+      const a = counterAdapter();
+      await a.transaction(async (outer) => {
+        await seedUser(
+          outer as unknown as ReturnType<typeof counterAdapter>,
+          "Outer",
+          "outer@test.com",
+        );
+        // Better Auth wraps several internal flows in runWithTransaction, so
+        // this nesting happens for real. It must join the open transaction
+        // rather than opening a sibling that deadlocks on our own writes.
+        await a.transaction(async (inner) => {
+          await seedUser(
+            inner as unknown as ReturnType<typeof counterAdapter>,
+            "Inner",
+            "inner@test.com",
+          );
+        });
+      });
+      expect(await a.count({ model: "user" })).toBe(2);
+    });
+
+    test("a throw inside a nested transaction rolls the outer one back", async () => {
+      const a = counterAdapter();
+      await expect(
+        a.transaction(async (outer) => {
+          await seedUser(
+            outer as unknown as ReturnType<typeof counterAdapter>,
+            "OuterKept",
+            "outer-kept@test.com",
+          );
+          await a.transaction(async (inner) => {
+            await seedUser(
+              inner as unknown as ReturnType<typeof counterAdapter>,
+              "InnerFails",
+              "inner-fails@test.com",
+            );
+            throw new Error("inner blew up");
+          });
+        }),
+      ).rejects.toThrow("inner blew up");
+      // The nested call joined the outer transaction, so cancelling it discards
+      // both writes — there is no partially committed outer.
+      expect(await a.count({ model: "user" })).toBe(0);
+    });
+
+    test("reads inside a transaction see its own uncommitted writes", async () => {
+      const a = counterAdapter();
+      await a.transaction(async (trx) => {
+        await seedUser(
+          trx as unknown as ReturnType<typeof counterAdapter>,
+          "SelfRead",
+          "self-read@test.com",
+        );
+        const seen = await trx.findOne<Record<string, unknown>>({
+          model: "user",
+          where: [{ field: "email", value: "self-read@test.com" }],
+        });
+        expect(seen?.name).toBe("SelfRead");
+      });
+    });
+
     test("keeps concurrent transactions isolated from one another", async () => {
       const a = counterAdapter();
       const [, rejected] = await Promise.allSettled([
