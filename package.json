@@ -30,7 +30,7 @@
     "test": "bun run test:unit"
   },
   "peerDependencies": {
-    "better-auth": "^1.6.7",
+    "better-auth": "^1.7.0",
     "surrealdb": "^2.0.3"
   },
   "devDependencies": {
@@ -39,7 +39,7 @@
     "@changesets/cli": "^2.31.0",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
-    "better-auth": "^1.6.7",
+    "better-auth": "^1.7.2",
     "surrealdb": "^2.0.3",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",

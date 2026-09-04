@@ -32,6 +32,8 @@ export type AdapterMethod =
   | "findMany"
   | "delete"
   | "deleteMany"
+  | "consumeOne"
+  | "incrementOne"
   | "count";
 
 export interface FieldMappingRule {

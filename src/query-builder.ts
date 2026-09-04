@@ -83,6 +83,55 @@ export function buildCreateQuery(
   });
 }
 
+/**
+ * A target expression selecting at most one record.
+ *
+ * SurrealDB's `DELETE`/`UPDATE` do not accept `LIMIT`, and `UPDATE ONLY <table>
+ * WHERE ...` errors with "Expected a single result output when using the ONLY
+ * keyword" as soon as two rows match. Targeting a `SELECT VALUE id ... LIMIT 1`
+ * subquery instead keeps the whole thing one statement — so it stays atomic —
+ * while guaranteeing at most one row is touched.
+ */
+export function buildSingleRecordTarget(
+  tableName: string,
+  whereClause: string,
+): string {
+  return `(SELECT VALUE id FROM ${tableName}${whereClause} LIMIT 1)`;
+}
+
+/**
+ * Build the `SET` assignments for an atomic guarded counter update.
+ *
+ * `increment` entries become `field += $i_field` (negative deltas decrement),
+ * `set` entries become `field = $s_field`. Bindings are written into
+ * `bindings`. Returns `null` when there is nothing to assign.
+ */
+export function buildIncrementSetClause(
+  bindings: Record<string, unknown>,
+  increment: Record<string, number>,
+  set: Record<string, unknown> | undefined,
+  resolveField: (field: string) => string,
+): string | null {
+  const assignments: string[] = [];
+
+  for (const [field, value] of Object.entries(set ?? {})) {
+    const fieldName = resolveField(field);
+    const param = `set_${fieldName}`;
+    bindings[param] = value === undefined ? null : value;
+    assignments.push(`${fieldName} = $${param}`);
+  }
+
+  for (const [field, delta] of Object.entries(increment ?? {})) {
+    const fieldName = resolveField(field);
+    const param = `inc_${fieldName}`;
+    bindings[param] = delta;
+    assignments.push(`${fieldName} += $${param}`);
+  }
+
+  if (assignments.length === 0) return null;
+  return ` SET ${assignments.join(", ")}`;
+}
+
 export function extractDirectRecords(
   where: CleanedWhere[],
   tableName: string,

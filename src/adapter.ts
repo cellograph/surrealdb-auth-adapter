@@ -1,16 +1,20 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { BetterAuthOptions } from "better-auth";
 import { createAdapterFactory } from "better-auth/adapters";
 import type {
   AdapterFactory,
   CleanedWhere,
   CustomAdapter,
+  DBTransactionAdapter,
 } from "better-auth/adapters";
 import { BoundQuery, RecordId, Uuid } from "surrealdb";
-import type { SurrealSession } from "surrealdb";
+import type { SurrealQueryable, SurrealSession } from "surrealdb";
 import {
   buildCreateQuery,
+  buildIncrementSetClause,
   buildQuerySuffix,
   buildRecordIdMap,
+  buildSingleRecordTarget,
   extractDirectRecords,
 } from "./query-builder.js";
 import {
@@ -31,8 +35,23 @@ import type { WhereContext } from "./where-clause.js";
 export const surrealdbAdapter = (
   db: SurrealSession,
   config?: SurrealAdapterConfig,
-): AdapterFactory<BetterAuthOptions> =>
-  createAdapterFactory({
+): AdapterFactory<BetterAuthOptions> => {
+  // Which SurrealDB handle the *current async context* should query through:
+  // the open transaction if we are inside one, otherwise the session itself.
+  //
+  // SurrealDB scopes every transaction to its own uuid on the shared session,
+  // so concurrent requests can each hold an independent transaction. An
+  // AsyncLocalStorage is what keeps them from leaking into one another — a
+  // plain mutable variable would let two overlapping requests write through
+  // each other's transaction.
+  const activeTransaction = new AsyncLocalStorage<SurrealQueryable>();
+  const getDb = (): SurrealQueryable => activeTransaction.getStore() ?? db;
+
+  // Captured from the adapter closure so `transaction` can build a second
+  // adapter instance bound to the same options.
+  let latestOptions: BetterAuthOptions | null = null;
+
+  const factory: AdapterFactory<BetterAuthOptions> = createAdapterFactory({
     config: {
       adapterId: "surrealdb-auth-adapter",
       adapterName: "surrealdb-auth-adapter",
@@ -44,6 +63,39 @@ export const surrealdbAdapter = (
       supportsJSON: true,
       supportsArrays: false,
       disableIdGeneration: config?.idGenerator?.startsWith("surreal") ?? false,
+      transaction: async <R>(
+        cb: (trx: DBTransactionAdapter<BetterAuthOptions>) => Promise<R>,
+      ): Promise<R> => {
+        // Already inside a transaction: join it rather than opening a sibling
+        // one, which would deadlock against our own uncommitted writes.
+        const current = activeTransaction.getStore();
+        if (current) {
+          return cb(
+            factory(
+              latestOptions ?? ({} as BetterAuthOptions),
+            ) as DBTransactionAdapter<BetterAuthOptions>,
+          );
+        }
+
+        const trx = await db.beginTransaction();
+        return activeTransaction.run(trx, async () => {
+          let result: R;
+          try {
+            result = await cb(
+              factory(
+                latestOptions ?? ({} as BetterAuthOptions),
+              ) as DBTransactionAdapter<BetterAuthOptions>,
+            );
+          } catch (error) {
+            await trx.cancel().catch(() => {
+              /* connection already tore the transaction down */
+            });
+            throw error;
+          }
+          await trx.commit();
+          return result;
+        });
+      },
     },
     adapter: ({
       options,
@@ -53,6 +105,7 @@ export const surrealdbAdapter = (
       getDefaultFieldName,
       debugLog,
     }) => {
+      latestOptions = options;
       const optionsAsAny = options as Record<string, unknown>;
       const schemaTables =
         ((optionsAsAny.schema as Record<string, unknown> | undefined)?.tables as
@@ -229,7 +282,7 @@ export const surrealdbAdapter = (
 
         const bound = new BoundQuery(qs, bindings);
         logQuery(method, bound);
-        const [rows] = await db.query<[unknown[]]>(bound).collect();
+        const [rows] = await getDb().query<[unknown[]]>(bound).collect();
         if (rows === null || rows === undefined) return [];
         // SurrealDB returns a plain object (not array) for ONLY queries
         if (!Array.isArray(rows)) return [rows];
@@ -273,7 +326,7 @@ export const surrealdbAdapter = (
             generateId,
           );
           logQuery("create", query);
-          const [rows] = await db.query<[unknown[]]>(query).collect();
+          const [rows] = await getDb().query<[unknown[]]>(query).collect();
           // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
           return recordIdsToStrings((rows as unknown[])[0]) as any;
         },
@@ -340,19 +393,44 @@ export const surrealdbAdapter = (
             tableName,
             mapNullToUndefined(values as Record<string, unknown>),
           );
-          const suffix = buildQuerySuffix({ returnAfter: true });
-          const rows = await runQuery(
-            "update",
-            model,
-            tableName,
-            where,
-            `UPDATE ONLY ${tableName} MERGE $content`,
-            (ids) => `UPDATE ONLY ${ids[0]?.toString()} MERGE $content`,
-            { content },
-            suffix,
+          const bindings: Record<string, unknown> = { content };
+          const direct = extractDirectRecords(where, tableName);
+
+          let target: string;
+          if (direct) {
+            const guard = buildWhereClause(
+              bindings,
+              direct.remainingWhere,
+              model,
+              whereCtx,
+              config,
+            );
+            // biome-ignore lint/style/noNonNullAssertion: extractDirectRecords always returns at least one id
+            target = `${direct.recordIds[0]!.toString()} MERGE $content${guard}`;
+          } else {
+            // Target a `LIMIT 1` subquery rather than the table itself:
+            // `UPDATE ONLY <table> WHERE ...` errors outright ("Expected a
+            // single result output when using the ONLY keyword") the moment two
+            // rows match, where the contract asks for one row updated.
+            const whereStr = buildWhereClause(
+              bindings,
+              where,
+              model,
+              whereCtx,
+              config,
+            );
+            target = `${buildSingleRecordTarget(tableName, whereStr)} MERGE $content`;
+          }
+
+          const bound = new BoundQuery(
+            `UPDATE ONLY ${target} RETURN AFTER`,
+            bindings,
           );
+          logQuery("update", bound);
+          const [rows] = await getDb().query<[unknown[]]>(bound).collect();
+          const row = Array.isArray(rows) ? (rows[0] ?? null) : (rows ?? null);
           // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
-          return recordIdsToStrings(rows[0] ?? null) as any;
+          return recordIdsToStrings(row) as any;
         },
 
         async updateMany({ model, where, update: values }) {
@@ -418,6 +496,87 @@ export const surrealdbAdapter = (
           return count;
         },
 
+        async consumeOne({ model, where }) {
+          const tableName = getModelName(model);
+          const bindings: Record<string, unknown> = {};
+          const direct = extractDirectRecords(where, tableName);
+
+          let queryStr: string;
+          if (direct) {
+            // The where clause named a record directly, so the remaining
+            // conditions act purely as a guard: `DELETE <rid> WHERE <guard>`
+            // deletes nothing when the guard fails.
+            const guard = buildWhereClause(
+              bindings,
+              direct.remainingWhere,
+              model,
+              whereCtx,
+              config,
+            );
+            // biome-ignore lint/style/noNonNullAssertion: extractDirectRecords always returns at least one id
+            queryStr = `DELETE ${direct.recordIds[0]!.toString()}${guard} RETURN BEFORE`;
+          } else {
+            const whereStr = buildWhereClause(
+              bindings,
+              where,
+              model,
+              whereCtx,
+              config,
+            );
+            queryStr = `DELETE ${buildSingleRecordTarget(tableName, whereStr)} RETURN BEFORE`;
+          }
+
+          const bound = new BoundQuery(queryStr, bindings);
+          logQuery("consumeOne", bound);
+          const [rows] = await getDb().query<[unknown[]]>(bound).collect();
+          const row = Array.isArray(rows) ? (rows[0] ?? null) : (rows ?? null);
+          // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
+          return recordIdsToStrings(row) as any;
+        },
+
+        async incrementOne({ model, where, increment, set }) {
+          const tableName = getModelName(model);
+          const bindings: Record<string, unknown> = {};
+          const setClause = buildIncrementSetClause(
+            bindings,
+            increment,
+            set,
+            (field) => getFieldName({ model, field }),
+          );
+          if (setClause === null) return null;
+
+          const direct = extractDirectRecords(where, tableName);
+          let queryStr: string;
+          if (direct) {
+            const guard = buildWhereClause(
+              bindings,
+              direct.remainingWhere,
+              model,
+              whereCtx,
+              config,
+            );
+            // biome-ignore lint/style/noNonNullAssertion: extractDirectRecords always returns at least one id
+            queryStr = `UPDATE ONLY ${direct.recordIds[0]!.toString()}${setClause}${guard} RETURN AFTER`;
+          } else {
+            const whereStr = buildWhereClause(
+              bindings,
+              where,
+              model,
+              whereCtx,
+              config,
+            );
+            queryStr = `UPDATE ONLY ${buildSingleRecordTarget(tableName, whereStr)}${setClause} RETURN AFTER`;
+          }
+
+          const bound = new BoundQuery(queryStr, bindings);
+          logQuery("incrementOne", bound);
+          const [rows] = await getDb().query<[unknown[]]>(bound).collect();
+          // A guard that matches nothing yields NONE (null) or an empty array.
+          const row = Array.isArray(rows) ? (rows[0] ?? null) : (rows ?? null);
+          // biome-ignore lint/suspicious/noExplicitAny: Stringify<T> cannot satisfy CustomAdapter's generic T at this boundary
+          return recordIdsToStrings(row) as any;
+        },
+
         async createSchema({ file, tables }) {
           return generateSchema({
             file,
@@ -430,3 +589,6 @@ export const surrealdbAdapter = (
       } as CustomAdapter;
     },
   });
+
+  return factory;
+};

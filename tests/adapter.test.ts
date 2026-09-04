@@ -18,6 +18,8 @@ const SCHEMA = `
   DEFINE FIELD OVERWRITE image ON TABLE user TYPE option<string>;
   DEFINE FIELD OVERWRITE createdAt ON TABLE user TYPE datetime;
   DEFINE FIELD OVERWRITE updatedAt ON TABLE user TYPE datetime;
+  DEFINE FIELD OVERWRITE status ON TABLE user TYPE option<string>;
+  DEFINE FIELD OVERWRITE attempts ON TABLE user TYPE option<number>;
   DEFINE INDEX OVERWRITE idx_user_email ON user COLUMNS email UNIQUE;
 
   DEFINE TABLE OVERWRITE session SCHEMAFULL;
@@ -410,5 +412,389 @@ describe("surrealdbAdapter integration", () => {
       forceAllowId: true,
     });
     expect(result.id).toContain("custom-id-123");
+  });
+  // `status` and `attempts` are declared as additional fields so Better Auth's
+  // transformInput keeps them instead of stripping them as unknown columns.
+  const COUNTER_OPTIONS = {
+    user: {
+      additionalFields: {
+        status: { type: "string", required: false },
+        attempts: { type: "number", required: false },
+      },
+    },
+  } as unknown as BetterAuthOptions;
+
+  function counterAdapter() {
+    return surrealdbAdapter(db, { idGenerator: "surreal.ULID" })(
+      COUNTER_OPTIONS,
+    );
+  }
+
+  async function seedUser(
+    a: ReturnType<typeof counterAdapter>,
+    name: string,
+    email: string,
+    extra: { status?: string; attempts?: number } = {},
+  ) {
+    const now = new Date();
+    return a.create<Record<string, unknown>>({
+      model: "user",
+      data: {
+        name,
+        email,
+        emailVerified: false,
+        createdAt: now,
+        updatedAt: now,
+        ...extra,
+      },
+    });
+  }
+
+  describe("consumeOne", () => {
+    test("deletes and returns the matching row", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Consume", "consume@test.com");
+      const consumed = await a.consumeOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+      });
+      expect(consumed).not.toBeNull();
+      expect(consumed?.email).toBe("consume@test.com");
+
+      const after = await a.findOne({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+      });
+      expect(after).toBeNull();
+    });
+
+    test("returns null when nothing matches", async () => {
+      const a = counterAdapter();
+      const consumed = await a.consumeOne({
+        model: "user",
+        where: [{ field: "email", value: "does-not-exist@test.com" }],
+      });
+      expect(consumed).toBeNull();
+    });
+
+    test("deletes at most one row when several match", async () => {
+      const a = counterAdapter();
+      await seedUser(a, "Shared", "shared1@test.com");
+      await seedUser(a, "Shared", "shared2@test.com");
+      const consumed = await a.consumeOne({
+        model: "user",
+        where: [{ field: "name", value: "Shared" }],
+      });
+      expect(consumed).not.toBeNull();
+      const remaining = await a.count({
+        model: "user",
+        where: [{ field: "name", value: "Shared" }],
+      });
+      expect(remaining).toBe(1);
+    });
+
+    test("honours a guard alongside a direct record id", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Guarded", "guarded@test.com", {
+        status: "approved",
+      });
+      const blocked = await a.consumeOne({
+        model: "user",
+        where: [
+          { field: "id", value: created.id as string },
+          { field: "status", value: "pending" },
+        ],
+      });
+      expect(blocked).toBeNull();
+
+      const allowed = await a.consumeOne<Record<string, unknown>>({
+        model: "user",
+        where: [
+          { field: "id", value: created.id as string },
+          { field: "status", value: "approved" },
+        ],
+      });
+      expect(allowed?.email).toBe("guarded@test.com");
+    });
+
+    test("consumes exactly once under concurrency", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Race", "race@test.com");
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          a.consumeOne({
+            model: "user",
+            where: [{ field: "id", value: created.id as string }],
+          }),
+        ),
+      );
+      expect(results.filter((r) => r !== null)).toHaveLength(1);
+    });
+  });
+
+  describe("incrementOne", () => {
+    test("increments a counter and returns the updated row", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Inc", "inc-a@test.com", {
+        attempts: 2,
+      });
+      const updated = await a.incrementOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+        increment: { attempts: 1 },
+      });
+      expect(updated?.attempts).toBe(3);
+    });
+
+    test("supports negative deltas", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Dec", "inc-b@test.com", {
+        attempts: 5,
+      });
+      const updated = await a.incrementOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+        increment: { attempts: -2 },
+      });
+      expect(updated?.attempts).toBe(3);
+    });
+
+    test("applies set assignments in the same statement", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Both", "inc-c@test.com", {
+        attempts: 0,
+      });
+      const updated = await a.incrementOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+        increment: { attempts: 1 },
+        set: { status: "locked" },
+      });
+      expect(updated?.attempts).toBe(1);
+      expect(updated?.status).toBe("locked");
+    });
+
+    test("returns null and writes nothing when the guard fails", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "Guard", "inc-d@test.com", {
+        attempts: 0,
+        status: "open",
+      });
+      const updated = await a.incrementOne({
+        model: "user",
+        where: [
+          { field: "id", value: created.id as string },
+          { field: "status", value: "closed" },
+        ],
+        increment: { attempts: 1 },
+      });
+      expect(updated).toBeNull();
+
+      const untouched = await a.findOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+      });
+      expect(untouched?.attempts).toBe(0);
+    });
+
+    test("does not error when several rows match the scan path", async () => {
+      const a = counterAdapter();
+      await seedUser(a, "Many", "inc-e@test.com", { attempts: 0 });
+      await seedUser(a, "Many", "inc-f@test.com", { attempts: 0 });
+      const updated = await a.incrementOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "name", value: "Many" }],
+        increment: { attempts: 1 },
+      });
+      expect(updated?.attempts).toBe(1);
+    });
+
+    test("loses no increments under concurrency", async () => {
+      const a = counterAdapter();
+      const created = await seedUser(a, "IncRace", "inc-race@test.com", {
+        attempts: 0,
+      });
+      await Promise.all(
+        Array.from({ length: 10 }, () =>
+          a.incrementOne({
+            model: "user",
+            where: [{ field: "id", value: created.id as string }],
+            increment: { attempts: 1 },
+          }),
+        ),
+      );
+      const final = await a.findOne<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "id", value: created.id as string }],
+      });
+      expect(final?.attempts).toBe(10);
+    });
+  });
+
+  describe("update", () => {
+    test("updates one row instead of erroring when several match", async () => {
+      const a = counterAdapter();
+      await seedUser(a, "Duplicate", "dup1@test.com");
+      await seedUser(a, "Duplicate", "dup2@test.com");
+      const updated = await a.update<Record<string, unknown>>({
+        model: "user",
+        where: [{ field: "name", value: "Duplicate" }],
+        update: { name: "Renamed" },
+      });
+      expect(updated?.name).toBe("Renamed");
+      expect(
+        await a.count({
+          model: "user",
+          where: [{ field: "name", value: "Duplicate" }],
+        }),
+      ).toBe(1);
+    });
+
+    test("returns null when no row matches", async () => {
+      const a = counterAdapter();
+      const updated = await a.update({
+        model: "user",
+        where: [{ field: "email", value: "nobody@test.com" }],
+        update: { name: "Ghost" },
+      });
+      expect(updated).toBeNull();
+    });
+  });
+
+  describe("transaction", () => {
+    test("commits every write when the callback resolves", async () => {
+      const a = counterAdapter();
+      await a.transaction(async (trx) => {
+        await seedUser(
+          trx as unknown as ReturnType<typeof counterAdapter>,
+          "TxA",
+          "tx-a@test.com",
+        );
+        await seedUser(
+          trx as unknown as ReturnType<typeof counterAdapter>,
+          "TxB",
+          "tx-b@test.com",
+        );
+      });
+      expect(await a.count({ model: "user" })).toBe(2);
+    });
+
+    test("rolls every write back when the callback throws", async () => {
+      const a = counterAdapter();
+      await expect(
+        a.transaction(async (trx) => {
+          await seedUser(
+            trx as unknown as ReturnType<typeof counterAdapter>,
+            "TxC",
+            "tx-c@test.com",
+          );
+          throw new Error("rollback please");
+        }),
+      ).rejects.toThrow("rollback please");
+      expect(await a.count({ model: "user" })).toBe(0);
+    });
+
+    test("returns the callback result", async () => {
+      const a = counterAdapter();
+      const result = await a.transaction(async () => "done");
+      expect(result).toBe("done");
+    });
+
+    test("a nested transaction joins the outer one", async () => {
+      const a = counterAdapter();
+      await a.transaction(async (outer) => {
+        await seedUser(
+          outer as unknown as ReturnType<typeof counterAdapter>,
+          "Outer",
+          "outer@test.com",
+        );
+        // Better Auth wraps several internal flows in runWithTransaction, so
+        // this nesting happens for real. It must join the open transaction
+        // rather than opening a sibling that deadlocks on our own writes.
+        await a.transaction(async (inner) => {
+          await seedUser(
+            inner as unknown as ReturnType<typeof counterAdapter>,
+            "Inner",
+            "inner@test.com",
+          );
+        });
+      });
+      expect(await a.count({ model: "user" })).toBe(2);
+    });
+
+    test("a throw inside a nested transaction rolls the outer one back", async () => {
+      const a = counterAdapter();
+      await expect(
+        a.transaction(async (outer) => {
+          await seedUser(
+            outer as unknown as ReturnType<typeof counterAdapter>,
+            "OuterKept",
+            "outer-kept@test.com",
+          );
+          await a.transaction(async (inner) => {
+            await seedUser(
+              inner as unknown as ReturnType<typeof counterAdapter>,
+              "InnerFails",
+              "inner-fails@test.com",
+            );
+            throw new Error("inner blew up");
+          });
+        }),
+      ).rejects.toThrow("inner blew up");
+      // The nested call joined the outer transaction, so cancelling it discards
+      // both writes — there is no partially committed outer.
+      expect(await a.count({ model: "user" })).toBe(0);
+    });
+
+    test("reads inside a transaction see its own uncommitted writes", async () => {
+      const a = counterAdapter();
+      await a.transaction(async (trx) => {
+        await seedUser(
+          trx as unknown as ReturnType<typeof counterAdapter>,
+          "SelfRead",
+          "self-read@test.com",
+        );
+        const seen = await trx.findOne<Record<string, unknown>>({
+          model: "user",
+          where: [{ field: "email", value: "self-read@test.com" }],
+        });
+        expect(seen?.name).toBe("SelfRead");
+      });
+    });
+
+    test("keeps concurrent transactions isolated from one another", async () => {
+      const a = counterAdapter();
+      const [, rejected] = await Promise.allSettled([
+        a.transaction(async (trx) => {
+          await seedUser(
+            trx as unknown as ReturnType<typeof counterAdapter>,
+            "Keep",
+            "keep@test.com",
+          );
+        }),
+        a.transaction(async (trx) => {
+          await seedUser(
+            trx as unknown as ReturnType<typeof counterAdapter>,
+            "Drop",
+            "drop@test.com",
+          );
+          throw new Error("discard this one");
+        }),
+      ]);
+      expect(rejected?.status).toBe("rejected");
+      // The committed transaction survives; the cancelled one leaves nothing.
+      expect(
+        await a.count({
+          model: "user",
+          where: [{ field: "name", value: "Keep" }],
+        }),
+      ).toBe(1);
+      expect(
+        await a.count({
+          model: "user",
+          where: [{ field: "name", value: "Drop" }],
+        }),
+      ).toBe(0);
+    });
   });
 });

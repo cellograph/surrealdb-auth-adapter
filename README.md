@@ -2,7 +2,7 @@
 
 **SurrealDB adapter for [Better Auth](https://better-auth.com)** — a production-grade database adapter connecting SurrealDB's multi-model querying to Better Auth's authentication system.
 
-Targets **SurrealDB v3** with the **`surrealdb@^2.0.3`** JS SDK and **`better-auth@^1.6.7`**.
+Targets **SurrealDB v3** with the **`surrealdb@^2.0.3`** JS SDK and **`better-auth@^1.7.0`**.
 
 ---
 
@@ -75,6 +75,46 @@ surrealdbAdapter(db, {
 | `surreal`        | SurrealDB auto           | `type::record('table')`                |
 | _(default)_      | Better Auth              | whatever `advanced.database.generateId` returns |
 
+## Atomic operations
+
+Better Auth 1.7 asks adapters for two race-safe primitives, and both are
+implemented as a single SurrealQL statement so the atomicity is the database's,
+not the adapter's:
+
+| Method | SurrealQL | Used by |
+|--------|-----------|---------|
+| `consumeOne` | `DELETE … RETURN BEFORE` | verification-token consumption, device-code redemption |
+| `incrementOne` | `UPDATE ONLY … SET n += $d … RETURN AFTER` | two-factor backup codes, rate limiting, organization counters |
+
+Both take the `WHERE` clause as *both* selector and guard: when the guard matches
+nothing they return `null` and write nothing, rather than throwing. Where the
+clause names a record directly the statement targets that record id; otherwise it
+targets a `(SELECT VALUE id … LIMIT 1)` subquery, which guarantees at most one row
+is touched — SurrealDB's `DELETE`/`UPDATE` accept no `LIMIT`, and
+`UPDATE ONLY <table> WHERE …` errors as soon as two rows match.
+
+## Transactions
+
+`transaction()` runs the callback inside a real SurrealDB transaction
+(`beginTransaction()` / `commit()` / `cancel()`); every write commits together, or
+none of them do:
+
+```ts
+await auth.$context.then((ctx) =>
+  ctx.adapter.transaction(async (trx) => {
+    const user = await trx.create({ model: "user", data: { /* … */ } });
+    await trx.create({ model: "session", data: { userId: user.id /* … */ } });
+    // throwing anywhere in here rolls both writes back
+  }),
+);
+```
+
+SurrealDB scopes each transaction to its own id on the shared session, so
+concurrent requests hold independent transactions. The adapter tracks the current
+one in an `AsyncLocalStorage`, which is what keeps overlapping requests from
+writing through each other's transaction. A `transaction()` nested inside another
+joins the outer one instead of opening a sibling.
+
 ## Schema Generation
 
 Works with the Better Auth CLI:
@@ -100,7 +140,7 @@ const auth = betterAuth({
 ## Requirements
 
 - Node.js ≥ 20 or Bun ≥ 1.2
-- `better-auth` ^1.6.7
+- `better-auth` ^1.7.0
 - `surrealdb` ^2.0.3
 - SurrealDB server v3.x
 
