@@ -3,8 +3,10 @@ import { RecordId } from "surrealdb";
 import { describe, expect, test } from "vitest";
 import {
   buildCreateQuery,
+  buildIncrementSetClause,
   buildQuerySuffix,
   buildRecordIdMap,
+  buildSingleRecordTarget,
   extractDirectRecords,
 } from "../src/query-builder.js";
 
@@ -259,5 +261,76 @@ describe("buildRecordIdMap", () => {
       ({ field }) => field,
     );
     expect(map.tableSpecific.user).toEqual({});
+  });
+});
+
+describe("buildSingleRecordTarget", () => {
+  test("wraps the table in a LIMIT 1 id subquery", () => {
+    expect(buildSingleRecordTarget("user", " WHERE email = $where_0")).toBe(
+      "(SELECT VALUE id FROM user WHERE email = $where_0 LIMIT 1)",
+    );
+  });
+
+  test("works with an empty where clause", () => {
+    expect(buildSingleRecordTarget("user", "")).toBe(
+      "(SELECT VALUE id FROM user LIMIT 1)",
+    );
+  });
+});
+
+describe("buildIncrementSetClause", () => {
+  const identity = (field: string) => field;
+
+  test("builds += assignments for increments", () => {
+    const bindings: Record<string, unknown> = {};
+    const clause = buildIncrementSetClause(
+      bindings,
+      { attempts: 1 },
+      undefined,
+      identity,
+    );
+    expect(clause).toBe(" SET attempts += $inc_attempts");
+    expect(bindings).toEqual({ inc_attempts: 1 });
+  });
+
+  test("supports negative deltas", () => {
+    const bindings: Record<string, unknown> = {};
+    buildIncrementSetClause(bindings, { credits: -5 }, undefined, identity);
+    expect(bindings.inc_credits).toBe(-5);
+  });
+
+  test("combines set assignments with increments", () => {
+    const bindings: Record<string, unknown> = {};
+    const clause = buildIncrementSetClause(
+      bindings,
+      { attempts: 1 },
+      { status: "locked" },
+      identity,
+    );
+    expect(clause).toBe(" SET status = $set_status, attempts += $inc_attempts");
+    expect(bindings).toEqual({ set_status: "locked", inc_attempts: 1 });
+  });
+
+  test("maps field names through the resolver", () => {
+    const bindings: Record<string, unknown> = {};
+    const clause = buildIncrementSetClause(
+      bindings,
+      { failedAttempts: 2 },
+      undefined,
+      (field) => (field === "failedAttempts" ? "failed_attempts" : field),
+    );
+    expect(clause).toBe(" SET failed_attempts += $inc_failed_attempts");
+    expect(bindings.inc_failed_attempts).toBe(2);
+  });
+
+  test("binds undefined set values as null", () => {
+    const bindings: Record<string, unknown> = {};
+    buildIncrementSetClause(bindings, {}, { revokedAt: undefined }, identity);
+    expect(bindings.set_revokedAt).toBeNull();
+  });
+
+  test("returns null when there is nothing to assign", () => {
+    expect(buildIncrementSetClause({}, {}, undefined, identity)).toBeNull();
+    expect(buildIncrementSetClause({}, {}, {}, identity)).toBeNull();
   });
 });
